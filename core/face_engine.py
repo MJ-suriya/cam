@@ -108,33 +108,13 @@ def is_valid_face_geometry(face_arr) -> bool:
     return True
 
 
-import torch
-
-# Fix PyTorch 2.6+ weights_only compatibility for Ultralytics YOLO models
-try:
-    if hasattr(torch.serialization, "add_safe_globals"):
-        import ultralytics.nn.tasks
-        torch.serialization.add_safe_globals([ultralytics.nn.tasks.DetectionModel])
-except Exception:
-    pass
-
-try:
-    _orig_torch_load = torch.load
-    def _safe_torch_load(*args, **kwargs):
-        if "weights_only" not in kwargs:
-            kwargs["weights_only"] = False
-        return _orig_torch_load(*args, **kwargs)
-    torch.load = _safe_torch_load
-except Exception:
-    pass
-
-from ultralytics import YOLO
+ENABLE_YOLO = os.getenv("ENABLE_YOLO", "0").lower() in ["1", "true", "yes"]
 
 class FaceRecognitionEngine:
     """
-    Two-Stage Enterprise CCTV Face Detection & Recognition Engine:
-    Stage 1: YOLOv8 Person Detection (eliminates 100% of non-human background/floor/stair false positives)
-    Stage 2: OpenCV YuNet Face Detection + SFace 128-d cosine recognition on verified human head regions.
+    Enterprise CCTV Face Detection & Recognition Engine:
+    - Lightweight Render Mode (< 180MB RAM): Pure OpenCV YuNet (ONNX) + SFace (Cosine) + Geometric Validation.
+    - Full Mode: YOLOv8 Person Gating + YuNet + SFace.
     """
 
     def __init__(self, match_threshold: float = 0.46, detector_score_thresh: float = 0.80):
@@ -152,13 +132,21 @@ class FaceRecognitionEngine:
         self.reload_profiles()
 
     def _init_models(self):
-        try:
-            model_path = BASE_DIR / "yolov8n.pt" if (BASE_DIR / "yolov8n.pt").exists() else "yolov8n.pt"
-            self.person_detector = YOLO(str(model_path))
-            print("[FaceEngine] YOLOv8 Person Detector loaded successfully")
-        except Exception as e:
-            print(f"[FaceEngine] YOLOv8 fallback notice: {e}. Falling back to direct high-precision YuNet detector.")
-            self.person_detector = None
+        if ENABLE_YOLO:
+            try:
+                import torch
+                if hasattr(torch.serialization, "add_safe_globals"):
+                    import ultralytics.nn.tasks
+                    torch.serialization.add_safe_globals([ultralytics.nn.tasks.DetectionModel])
+                from ultralytics import YOLO
+                model_path = BASE_DIR / "yolov8n.pt" if (BASE_DIR / "yolov8n.pt").exists() else "yolov8n.pt"
+                self.person_detector = YOLO(str(model_path))
+                print("[FaceEngine] YOLOv8 Person Detector loaded successfully")
+            except Exception as e:
+                print(f"[FaceEngine] YOLOv8 notice: {e}. Running in pure OpenCV DNN mode.")
+                self.person_detector = None
+        else:
+            print("[FaceEngine] Running in Ultra-Lightweight OpenCV DNN Mode (< 180MB RAM for Render Free Tier)")
 
         if YUNET_MODEL.exists():
             try:
@@ -249,33 +237,80 @@ class FaceRecognitionEngine:
             return []
 
         with self.infer_lock:
-            orig_h, orig_w = frame.shape[:2]
-            results = []
+            # Direct Ultra-Lightweight YuNet Mode (Render Free Tier)
+            if self.person_detector is None:
+                self.detector.setInputSize((orig_w, orig_h))
+                self.detector.setScoreThreshold(self.detector_score_thresh)
+                self.detector.setNMSThreshold(0.35)
+                _, faces = self.detector.detect(frame)
+                if faces is not None and len(faces) > 0:
+                    for f_det in faces:
+                        det_conf = float(f_det[14])
+                        if det_conf < self.detector_score_thresh:
+                            continue
+                        if not is_valid_face_geometry(f_det):
+                            continue
+                        fx = int(f_det[0])
+                        fy = int(f_det[1])
+                        fw = int(f_det[2])
+                        fh = int(f_det[3])
+                        native_face_arr = f_det.copy()
+                        landmarks = [
+                            (int(native_face_arr[4]), int(native_face_arr[5])),
+                            (int(native_face_arr[6]), int(native_face_arr[7])),
+                            (int(native_face_arr[8]), int(native_face_arr[9])),
+                            (int(native_face_arr[10]), int(native_face_arr[11])),
+                            (int(native_face_arr[12]), int(native_face_arr[13])),
+                        ]
+                        aligned = self.recognizer.alignCrop(frame, native_face_arr)
+                        query_feat = self.recognizer.feature(aligned)
+                        best_ecno = None
+                        best_name = None
+                        best_score = 0.0
+                        for ecno, data in self.profile_embeddings.items():
+                            score = float(self.recognizer.match(query_feat, data["embedding"], cv2.FaceRecognizerSF_FR_COSINE))
+                            if score > best_score:
+                                best_score = score
+                                best_ecno = ecno
+                                best_name = data["name"]
+                        is_matched = best_score >= self.match_threshold
+                        is_high_confidence = best_score >= self.high_conf_threshold
+                        results.append({
+                            "bbox": (fx, fy, fw, fh),
+                            "det_confidence": round(det_conf, 3),
+                            "landmarks": landmarks,
+                            "is_matched": is_matched,
+                            "is_high_confidence": is_high_confidence,
+                            "ecno": best_ecno if is_matched else None,
+                            "name": best_name if is_matched else "Unregistered Person",
+                            "match_score": round(best_score, 3),
+                            "raw_face_arr": native_face_arr
+                        })
+                return results
 
-            # Stage 1: YOLOv8 Person Verification Gate
+            # Stage 1: YOLOv8 Person Verification Gate (when enabled)
             person_boxes = []
-            if self.person_detector is not None:
-                try:
-                    # Resize for fast inference
-                    yolo_w, yolo_h = 640, 384
-                    scaled_frame = cv2.resize(frame, (yolo_w, yolo_h))
-                    yolo_res = self.person_detector(scaled_frame, classes=[0], conf=0.45, verbose=False)
-                    
-                    if yolo_res and len(yolo_res[0].boxes) > 0:
-                        scale_x = orig_w / float(yolo_w)
-                        scale_y = orig_h / float(yolo_h)
-                        for box in yolo_res[0].boxes:
-                            xyxy = box.xyxy[0].cpu().numpy()
-                            px1 = max(0, int(xyxy[0] * scale_x))
-                            py1 = max(0, int(xyxy[1] * scale_y))
-                            px2 = min(orig_w, int(xyxy[2] * scale_x))
-                            py2 = min(orig_h, int(xyxy[3] * scale_y))
-                            pw = px2 - px1
-                            ph = py2 - py1
-                            if pw >= 35 and ph >= 70:
-                                person_boxes.append((px1, py1, pw, ph))
-                except Exception as e:
-                    print(f"[FaceEngine] Person detector warning: {e}")
+            try:
+                # Resize for fast inference
+                yolo_w, yolo_h = 640, 384
+                scaled_frame = cv2.resize(frame, (yolo_w, yolo_h))
+                yolo_res = self.person_detector(scaled_frame, classes=[0], conf=0.45, verbose=False)
+                
+                if yolo_res and len(yolo_res[0].boxes) > 0:
+                    scale_x = orig_w / float(yolo_w)
+                    scale_y = orig_h / float(yolo_h)
+                    for box in yolo_res[0].boxes:
+                        xyxy = box.xyxy[0].cpu().numpy()
+                        px1 = max(0, int(xyxy[0] * scale_x))
+                        py1 = max(0, int(xyxy[1] * scale_y))
+                        px2 = min(orig_w, int(xyxy[2] * scale_x))
+                        py2 = min(orig_h, int(xyxy[3] * scale_y))
+                        pw = px2 - px1
+                        ph = py2 - py1
+                        if pw >= 35 and ph >= 70:
+                            person_boxes.append((px1, py1, pw, ph))
+            except Exception as e:
+                print(f"[FaceEngine] Person detector warning: {e}")
 
             # If no person is present in the CCTV frame, return empty (0 false positives on stairs/floors)
             if not person_boxes:
