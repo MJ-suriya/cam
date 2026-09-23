@@ -35,9 +35,11 @@ class Config:
 
     @classmethod
     def get_rtsp_url(cls, channel: int, subtype: int = 1) -> str:
-        """Constructs secure Dahua RTSP URL for a given channel and stream subtype."""
-        user = cls.NVR_USERNAME
-        pwd = cls.NVR_PASSWORD
+        """Constructs secure Dahua RTSP URL with URL-encoded credentials."""
+        from urllib.parse import quote
+        user = quote(cls.NVR_USERNAME, safe="")
+        pwd = quote(cls.NVR_PASSWORD, safe="")
         ip = cls.NVR_IP
         port = cls.RTSP_PORT
         return f"rtsp://{user}:{pwd}@{ip}:{port}/cam/realmonitor?channel={channel}&subtype={subtype}"
+
