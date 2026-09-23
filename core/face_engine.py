@@ -108,6 +108,26 @@ def is_valid_face_geometry(face_arr) -> bool:
     return True
 
 
+import torch
+
+# Fix PyTorch 2.6+ weights_only compatibility for Ultralytics YOLO models
+try:
+    if hasattr(torch.serialization, "add_safe_globals"):
+        import ultralytics.nn.tasks
+        torch.serialization.add_safe_globals([ultralytics.nn.tasks.DetectionModel])
+except Exception:
+    pass
+
+try:
+    _orig_torch_load = torch.load
+    def _safe_torch_load(*args, **kwargs):
+        if "weights_only" not in kwargs:
+            kwargs["weights_only"] = False
+        return _orig_torch_load(*args, **kwargs)
+    torch.load = _safe_torch_load
+except Exception:
+    pass
+
 from ultralytics import YOLO
 
 class FaceRecognitionEngine:
@@ -133,10 +153,12 @@ class FaceRecognitionEngine:
 
     def _init_models(self):
         try:
-            self.person_detector = YOLO("yolov8n.pt")
+            model_path = BASE_DIR / "yolov8n.pt" if (BASE_DIR / "yolov8n.pt").exists() else "yolov8n.pt"
+            self.person_detector = YOLO(str(model_path))
             print("[FaceEngine] YOLOv8 Person Detector loaded successfully")
         except Exception as e:
-            print(f"[FaceEngine] Error loading YOLOv8: {e}")
+            print(f"[FaceEngine] YOLOv8 fallback notice: {e}. Falling back to direct high-precision YuNet detector.")
+            self.person_detector = None
 
         if YUNET_MODEL.exists():
             try:
