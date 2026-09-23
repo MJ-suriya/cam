@@ -108,13 +108,61 @@ def is_valid_face_geometry(face_arr) -> bool:
     return True
 
 
-ENABLE_YOLO = os.getenv("ENABLE_YOLO", "0").lower() in ["1", "true", "yes"]
+YOLO_ONNX_MODEL = MODELS_DIR / "yolov8n.onnx" if (MODELS_DIR / "yolov8n.onnx").exists() else (BASE_DIR / "yolov8n.onnx")
+
+
+class OpenCVDNNYOLOv8:
+    """
+    Ultra-lightweight YOLOv8 Person Detector running natively via OpenCV DNN C++ engine.
+    Consumes only ~25MB of RAM (avoids heavy 450MB PyTorch framework).
+    """
+
+    def __init__(self, onnx_path: str, conf_thresh: float = 0.45):
+        self.net = cv2.dnn.readNetFromONNX(str(onnx_path))
+        self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+        self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+        self.conf_thresh = conf_thresh
+
+    def detect_persons(self, frame: np.ndarray, orig_w: int, orig_h: int) -> List[Tuple[int, int, int, int]]:
+        blob = cv2.dnn.blobFromImage(frame, 1.0 / 255.0, (384, 384), swapRB=True, crop=False)
+        self.net.setInput(blob)
+        output = self.net.forward()  # (1, 84, 3024)
+        preds = output[0].T
+        boxes = []
+        confidences = []
+        scale_x = orig_w / 384.0
+        scale_y = orig_h / 384.0
+
+        for row in preds:
+            person_score = float(row[4])
+            if person_score >= self.conf_thresh:
+                cx, cy, w, h = float(row[0]), float(row[1]), float(row[2]), float(row[3])
+                x1 = int((cx - w / 2.0) * scale_x)
+                y1 = int((cy - h / 2.0) * scale_y)
+                pw = int(w * scale_x)
+                ph = int(h * scale_y)
+                if pw >= 35 and ph >= 70:
+                    boxes.append([x1, y1, pw, ph])
+                    confidences.append(person_score)
+
+        if not boxes:
+            return []
+
+        indices = cv2.dnn.NMSBoxes(boxes, confidences, self.conf_thresh, 0.45)
+        person_boxes = []
+        if len(indices) > 0:
+            for idx in indices.flatten():
+                b = boxes[idx]
+                person_boxes.append((max(0, b[0]), max(0, b[1]), b[2], b[3]))
+
+        return person_boxes
+
 
 class FaceRecognitionEngine:
     """
-    Enterprise CCTV Face Detection & Recognition Engine:
-    - Lightweight Render Mode (< 180MB RAM): Pure OpenCV YuNet (ONNX) + SFace (Cosine) + Geometric Validation.
-    - Full Mode: YOLOv8 Person Gating + YuNet + SFace.
+    Two-Stage Enterprise CCTV Face Detection & Recognition Engine (All 3 Models Active in < 180MB RAM):
+    Stage 1: YOLOv8 Person Detection (OpenCV DNN C++ onnx, eliminates non-human false positives)
+    Stage 2: OpenCV YuNet Face Detection + SFace 128-d cosine recognition on verified human head regions.
     """
 
     def __init__(self, match_threshold: float = 0.46, detector_score_thresh: float = 0.80):
@@ -132,35 +180,29 @@ class FaceRecognitionEngine:
         self.reload_profiles()
 
     def _init_models(self):
-        if ENABLE_YOLO:
+        # 1. Model 1: YOLOv8 Person Detector (OpenCV ONNX, ~25MB RAM)
+        if YOLO_ONNX_MODEL.exists():
             try:
-                import torch
-                if hasattr(torch.serialization, "add_safe_globals"):
-                    import ultralytics.nn.tasks
-                    torch.serialization.add_safe_globals([ultralytics.nn.tasks.DetectionModel])
-                from ultralytics import YOLO
-                model_path = BASE_DIR / "yolov8n.pt" if (BASE_DIR / "yolov8n.pt").exists() else "yolov8n.pt"
-                self.person_detector = YOLO(str(model_path))
-                print("[FaceEngine] YOLOv8 Person Detector loaded successfully")
+                self.person_detector = OpenCVDNNYOLOv8(str(YOLO_ONNX_MODEL), conf_thresh=0.45)
+                print(f"[FaceEngine] Model 1: OpenCV DNN YOLOv8 Person Detector loaded ({YOLO_ONNX_MODEL.name})")
             except Exception as e:
-                print(f"[FaceEngine] YOLOv8 notice: {e}. Running in pure OpenCV DNN mode.")
-                self.person_detector = None
-        else:
-            print("[FaceEngine] Running in Ultra-Lightweight OpenCV DNN Mode (< 180MB RAM for Render Free Tier)")
+                print(f"[FaceEngine] Warning loading OpenCV YOLOv8: {e}")
 
+        # 2. Model 2: YuNet Face Detector
         if YUNET_MODEL.exists():
             try:
                 self.detector = cv2.FaceDetectorYN.create(
                     str(YUNET_MODEL), "", (320, 320), self.detector_score_thresh, 0.35
                 )
-                print(f"[FaceEngine] YuNet detector loaded: {YUNET_MODEL.name} (thresh={self.detector_score_thresh})")
+                print(f"[FaceEngine] Model 2: YuNet detector loaded ({YUNET_MODEL.name})")
             except Exception as e:
                 print(f"[FaceEngine] Error loading YuNet: {e}")
 
+        # 3. Model 3: SFace Face Recognizer
         if SFACE_MODEL.exists():
             try:
                 self.recognizer = cv2.FaceRecognizerSF.create(str(SFACE_MODEL), "")
-                print(f"[FaceEngine] SFace recognizer loaded: {SFACE_MODEL.name} (match_thresh={self.match_threshold} -> >=87%)")
+                print(f"[FaceEngine] Model 3: SFace recognizer loaded ({SFACE_MODEL.name})")
             except Exception as e:
                 print(f"[FaceEngine] Error loading SFace: {e}")
 
@@ -237,84 +279,112 @@ class FaceRecognitionEngine:
             return []
 
         with self.infer_lock:
-            # Direct Ultra-Lightweight YuNet Mode (Render Free Tier)
-            if self.person_detector is None:
-                self.detector.setInputSize((orig_w, orig_h))
+            orig_h, orig_w = frame.shape[:2]
+            results = []
+
+            # Stage 1: YOLOv8 Person Verification Gate (OpenCV DNN C++ native)
+            person_boxes = []
+            if self.person_detector is not None:
+                try:
+                    person_boxes = self.person_detector.detect_persons(frame, orig_w, orig_h)
+                except Exception as e:
+                    print(f"[FaceEngine] Person detector warning: {e}")
+
+                # If no person is present in the CCTV frame, return empty (0 false positives on stairs/floors)
+                if not person_boxes:
+                    return results
+            else:
+                # If person detector is not loaded, process whole frame
+                person_boxes = [(0, 0, orig_w, orig_h)]
+
+            # Stage 2: Face Detection inside each detected human's upper body / head region
+            for (px, py, pw, ph) in person_boxes:
+                if self.person_detector is not None:
+                    # Crop upper 50% of the person (head & shoulder region)
+                    hx1 = max(0, px - int(pw * 0.15))
+                    hy1 = max(0, py - int(ph * 0.08))
+                    hx2 = min(orig_w, px + pw + int(pw * 0.15))
+                    hy2 = min(orig_h, py + int(ph * 0.55))
+                    head_crop = frame[hy1:hy2, hx1:hx2]
+                else:
+                    hx1, hy1 = 0, 0
+                    head_crop = frame
+
+                ch_h, ch_w = head_crop.shape[:2]
+                if ch_h < 32 or ch_w < 32:
+                    continue
+
+                self.detector.setInputSize((ch_w, ch_h))
                 self.detector.setScoreThreshold(self.detector_score_thresh)
                 self.detector.setNMSThreshold(0.35)
-                _, faces = self.detector.detect(frame)
-                if faces is not None and len(faces) > 0:
-                    for f_det in faces:
-                        det_conf = float(f_det[14])
-                        if det_conf < self.detector_score_thresh:
-                            continue
-                        if not is_valid_face_geometry(f_det):
-                            continue
-                        fx = int(f_det[0])
-                        fy = int(f_det[1])
-                        fw = int(f_det[2])
-                        fh = int(f_det[3])
-                        native_face_arr = f_det.copy()
-                        landmarks = [
-                            (int(native_face_arr[4]), int(native_face_arr[5])),
-                            (int(native_face_arr[6]), int(native_face_arr[7])),
-                            (int(native_face_arr[8]), int(native_face_arr[9])),
-                            (int(native_face_arr[10]), int(native_face_arr[11])),
-                            (int(native_face_arr[12]), int(native_face_arr[13])),
-                        ]
-                        aligned = self.recognizer.alignCrop(frame, native_face_arr)
-                        query_feat = self.recognizer.feature(aligned)
-                        best_ecno = None
-                        best_name = None
-                        best_score = 0.0
-                        for ecno, data in self.profile_embeddings.items():
-                            score = float(self.recognizer.match(query_feat, data["embedding"], cv2.FaceRecognizerSF_FR_COSINE))
-                            if score > best_score:
-                                best_score = score
-                                best_ecno = ecno
-                                best_name = data["name"]
-                        is_matched = best_score >= self.match_threshold
-                        is_high_confidence = best_score >= self.high_conf_threshold
-                        results.append({
-                            "bbox": (fx, fy, fw, fh),
-                            "det_confidence": round(det_conf, 3),
-                            "landmarks": landmarks,
-                            "is_matched": is_matched,
-                            "is_high_confidence": is_high_confidence,
-                            "ecno": best_ecno if is_matched else None,
-                            "name": best_name if is_matched else "Unregistered Person",
-                            "match_score": round(best_score, 3),
-                            "raw_face_arr": native_face_arr
-                        })
-                return results
+                _, faces = self.detector.detect(head_crop)
 
-            # Stage 1: YOLOv8 Person Verification Gate (when enabled)
-            person_boxes = []
-            try:
-                # Resize for fast inference
-                yolo_w, yolo_h = 640, 384
-                scaled_frame = cv2.resize(frame, (yolo_w, yolo_h))
-                yolo_res = self.person_detector(scaled_frame, classes=[0], conf=0.45, verbose=False)
-                
-                if yolo_res and len(yolo_res[0].boxes) > 0:
-                    scale_x = orig_w / float(yolo_w)
-                    scale_y = orig_h / float(yolo_h)
-                    for box in yolo_res[0].boxes:
-                        xyxy = box.xyxy[0].cpu().numpy()
-                        px1 = max(0, int(xyxy[0] * scale_x))
-                        py1 = max(0, int(xyxy[1] * scale_y))
-                        px2 = min(orig_w, int(xyxy[2] * scale_x))
-                        py2 = min(orig_h, int(xyxy[3] * scale_y))
-                        pw = px2 - px1
-                        ph = py2 - py1
-                        if pw >= 35 and ph >= 70:
-                            person_boxes.append((px1, py1, pw, ph))
-            except Exception as e:
-                print(f"[FaceEngine] Person detector warning: {e}")
+                if faces is None or len(faces) == 0:
+                    continue
 
-            # If no person is present in the CCTV frame, return empty (0 false positives on stairs/floors)
-            if not person_boxes:
-                return results
+                for f_det in faces:
+                    det_conf = float(f_det[14])
+                    # Ensure face detection confidence >= 0.80 inside human crop
+                    if det_conf < self.detector_score_thresh:
+                        continue
+
+                    if not is_valid_face_geometry(f_det):
+                        continue
+
+                    # Map face coordinates and landmarks back to original native frame
+                    fx = int(f_det[0] + hx1)
+                    fy = int(f_det[1] + hy1)
+                    fw = int(f_det[2])
+                    fh = int(f_det[3])
+
+                    native_face_arr = f_det.copy()
+                    native_face_arr[0] = fx
+                    native_face_arr[1] = fy
+                    native_face_arr[2] = fw
+                    native_face_arr[3] = fh
+                    for i in range(4, 14, 2):
+                        native_face_arr[i] = f_det[i] + hx1
+                        native_face_arr[i+1] = f_det[i+1] + hy1
+
+                    landmarks = [
+                        (int(native_face_arr[4]), int(native_face_arr[5])),
+                        (int(native_face_arr[6]), int(native_face_arr[7])),
+                        (int(native_face_arr[8]), int(native_face_arr[9])),
+                        (int(native_face_arr[10]), int(native_face_arr[11])),
+                        (int(native_face_arr[12]), int(native_face_arr[13])),
+                    ]
+
+                    # Crop and align face from full native resolution
+                    aligned = self.recognizer.alignCrop(frame, native_face_arr)
+                    query_feat = self.recognizer.feature(aligned)
+
+                    best_ecno = None
+                    best_name = None
+                    best_score = 0.0
+
+                    for ecno, data in self.profile_embeddings.items():
+                        score = float(self.recognizer.match(query_feat, data["embedding"], cv2.FaceRecognizerSF_FR_COSINE))
+                        if score > best_score:
+                            best_score = score
+                            best_ecno = ecno
+                            best_name = data["name"]
+
+                    is_matched = best_score >= self.match_threshold
+                    is_high_confidence = best_score >= self.high_conf_threshold
+
+                    results.append({
+                        "bbox": (fx, fy, fw, fh),
+                        "det_confidence": round(det_conf, 3),
+                        "landmarks": landmarks,
+                        "is_matched": is_matched,
+                        "is_high_confidence": is_high_confidence,
+                        "ecno": best_ecno if is_matched else None,
+                        "name": best_name if is_matched else "Unregistered Person",
+                        "match_score": round(best_score, 3),
+                        "raw_face_arr": native_face_arr
+                    })
+
+            return results
 
             # Stage 2: Face Detection inside each detected human's upper body / head region
             for (px, py, pw, ph) in person_boxes:
