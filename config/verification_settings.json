@@ -1,0 +1,10 @@
+{
+  "face_confidence_threshold": 0.80,
+  "fingerprint_window_minutes": 5,
+  "morning_window_start": "07:00:00",
+  "morning_window_end": "12:00:00",
+  "evening_window_start": "17:00:00",
+  "evening_window_end": "22:00:00",
+  "enable_exit_detection": true,
+  "cooldown_seconds": 60
+}

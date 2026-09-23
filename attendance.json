@@ -1,0 +1,13 @@
+[
+  {
+    "ecno": "2159",
+    "name": "Employee 2159",
+    "date": "2026-09-19",
+    "check_in_time": "19:00:44",
+    "camera_source": "NVR 2 - Channel 30",
+    "channel": 30,
+    "status": "PRESENT",
+    "confidence": 0.98,
+    "snapshot": "2159_2026-09-19_1789824644.jpg"
+  }
+]

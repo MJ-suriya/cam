@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: dahua-ai-attendance
+    env: docker
+    dockerfilePath: Dockerfile
+    plan: starter # Starter plan recommended (2GB+ RAM for AI video stream decoding)
+    region: oregon
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: NVR_IP
+        sync: false # Set in Render Dashboard
+      - key: RTSP_PORT
+        value: "554"
+      - key: NVR_USERNAME
+        sync: false # Set in Render Dashboard
+      - key: NVR_PASSWORD
+        sync: false # Set in Render Dashboard
+      - key: DEFAULT_SUBTYPE
+        value: "1"
+    disk:
+      name: attendance-data
+      mountPath: /app/saved_faces
+      sizeGB: 5

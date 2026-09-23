@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dahua AI Face & Fingerprint Attendance Verification System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  
+  <!-- Local Offline Tailwind CSS -->
+  <script src="/static/tailwind.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          },
+          colors: {
+            brand: {
+              50: '#f0f9ff',
+              400: '#38bdf8',
+              500: '#0ea5e9',
+              600: '#0284c7',
+            },
+            dark: {
+              bg: '#07090E',
+              card: '#0D121F',
+              header: '#0A0E18',
+              border: '#1E293B',
+              input: '#111827',
+              hover: '#161F33'
+            },
+            accent: {
+              green: '#10B981',
+              amber: '#F59E0B',
+              red: '#EF4444',
+              purple: '#A855F7',
+              blue: '#38BDF8'
+            }
+          }
+        }
+      }
+    };
+  </script>
+  <link rel="stylesheet" href="/static/style.css?v=20260923">
+  <style>
+    /* Critical UI & Modal Styles */
+    .hidden {
+      display: none !important;
+    }
+    input, select, textarea {
+      color-scheme: dark;
+    }
+  </style>
+  <script>
+    function switchTab(targetTab) {
+      const tabs = ["surveillance", "verification", "attendance", "employees"];
+
+      // 1. Update button active styling
+      document.querySelectorAll(".nav-btn").forEach((btn) => {
+        if (btn.getAttribute("data-tab") === targetTab) {
+          btn.classList.add("active", "bg-sky-600", "text-white");
+          btn.classList.remove("text-slate-400");
+        } else {
+          btn.classList.remove("active", "bg-sky-600", "text-white");
+          btn.classList.add("text-slate-400");
+        }
+      });
+
+      // 2. Hide all other sections and display selected section
+      tabs.forEach((t) => {
+        const pane = document.getElementById("tab-" + t);
+        if (pane) {
+          if (t === targetTab) {
+            pane.style.setProperty("display", "flex", "important");
+            pane.classList.remove("hidden");
+            pane.classList.add("active");
+          } else {
+            pane.style.setProperty("display", "none", "important");
+            pane.classList.add("hidden");
+            pane.classList.remove("active");
+          }
+        }
+      });
+
+      // 3. Trigger data refresh for specific tab if function exists
+      if (targetTab === "verification" && typeof loadVerificationData === "function") {
+        loadVerificationData();
+      } else if (targetTab === "attendance" && typeof loadAttendanceData === "function") {
+        loadAttendanceData();
+      } else if (targetTab === "employees" && typeof loadEmployeesData === "function") {
+        loadEmployeesData();
+      }
+    }
+  </script>
+</head>
+<body class="bg-[#07090E] text-slate-100 font-sans antialiased min-h-screen flex flex-col selection:bg-sky-500 selection:text-white">
+
+  <!-- Main App Shell -->
+  <div class="flex flex-col flex-1 h-screen overflow-hidden">
+    
+    <!-- Top Header Bar -->
+    <header class="bg-[#0A0E18] border-b border-slate-800 px-6 py-3 flex items-center justify-between z-30 shadow-md">
+      <div class="flex items-center gap-4">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-sky-600 to-indigo-600 flex items-center justify-center text-xl shadow-lg shadow-sky-500/20 ring-1 ring-white/20">
+            👁️
+          </div>
+          <div>
+            <h1 class="text-base font-extrabold tracking-wide text-white leading-tight flex items-center gap-2">
+              DAHUA AI VISION
+              <span class="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">AI Attendance</span>
+            </h1>
+            <p class="text-xs text-slate-400 font-medium">Face + Fingerprint Dual-Verification Engine</p>
+          </div>
+        </div>
+
+        <div class="hidden lg:flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900/80 border border-slate-800 text-xs text-slate-300">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span>NVR 2 (Port 37779) Active</span>
+        </div>
+      </div>
+
+      <!-- Center Navigation Tabs -->
+      <nav class="flex items-center gap-1.5 bg-[#06080D] p-1 rounded-xl border border-slate-800/80">
+        <button onclick="switchTab('surveillance')" class="nav-btn active flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition-all" data-tab="surveillance">
+          <span>📹</span> Live Feeds
+        </button>
+        <button onclick="switchTab('verification')" class="nav-btn flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition-all" data-tab="verification">
+          <span>⚡</span> Face + Fingerprint Matrix
+        </button>
+        <button onclick="switchTab('attendance')" class="nav-btn flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition-all" data-tab="attendance">
+          <span>📋</span> Attendance Log
+        </button>
+        <button onclick="switchTab('employees')" class="nav-btn flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition-all" data-tab="employees">
+          <span>👥</span> Employee Roster
+        </button>
+      </nav>
+
+      <!-- Right Header Actions & Clock -->
+      <div class="flex items-center gap-3">
+        <button onclick="openSettingsModal()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-400 border border-sky-500/30 text-xs font-semibold transition-all">
+          <span>⚙️</span> Settings
+        </button>
+        <div class="text-right pl-3 border-l border-slate-800">
+          <div class="font-mono text-sm font-bold text-white tracking-wider" id="liveClock">--:--:--</div>
+          <div class="text-[11px] text-slate-400 font-medium" id="liveDate">-- --- ----</div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Dynamic Tab Content -->
+    <main class="flex-1 overflow-hidden relative bg-[#07090E]">
+
+      <!-- ============================================== -->
+      <!-- TAB 1: 3-CAMERA SURVEILLANCE & TICKER STREAM -->
+      <!-- ============================================== -->
+      <section id="tab-surveillance" class="tab-pane active h-full flex p-4 gap-4 overflow-hidden">
+        
+        <!-- Left: 3-Camera Grid -->
+        <div class="flex-1 flex flex-col gap-3 min-w-0">
+          <div class="flex items-center justify-between bg-[#0D121F] px-4 py-2.5 rounded-xl border border-slate-800">
+            <div class="flex items-center gap-2.5">
+              <h2 class="text-sm font-bold text-white">Live Multi-Camera CCTV Stream</h2>
+              <span class="text-xs text-sky-400 bg-sky-500/10 border border-sky-500/20 px-2.5 py-0.5 rounded-md font-mono" id="activeChannelsBadge">NVR 2 • Active Channels</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <button id="btn3Grid" class="px-3 py-1.5 text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-700 transition-all">
+                Grid View
+              </button>
+              <button id="btnReloadCams" class="px-3 py-1.5 text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-700 transition-all">
+                🔄 Reconnect Feeds
+              </button>
+            </div>
+          </div>
+
+          <!-- 4 Cameras Grid -->
+          <div class="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-3 min-h-0" id="camsGrid">
+            
+            <!-- Camera 30 -->
+            <div class="cam-card bg-[#0D121F] border border-slate-800 rounded-xl overflow-hidden flex flex-col" id="camCard30">
+              <div class="bg-[#0A0E18] px-3 py-2 border-b border-slate-800 flex items-center justify-between">
+                <div class="flex items-center gap-2 text-xs font-semibold text-white">
+                  <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                  <span class="font-mono text-sky-400 font-bold">CH 30</span>
+                  <span class="text-slate-300">Turnstile</span>
+                </div>
+                <button onclick="focusCamera(30)" class="text-slate-400 hover:text-white text-xs px-2 py-1 rounded bg-slate-800/60">⛶</button>
+              </div>
+              <div class="flex-1 bg-black relative flex items-center justify-center min-h-0">
+                <img src="/video_feed/30" class="w-full h-full object-contain" id="stream30" alt="CH 30">
+                <div class="absolute bottom-2 right-2 bg-slate-900/90 border border-emerald-500/30 px-2 py-0.5 rounded text-[10px] font-bold text-emerald-400 backdrop-blur-sm">
+                  AI Active &bull; &ge;87%
+                </div>
+              </div>
+            </div>
+
+            <!-- Camera 31 -->
+            <div class="cam-card bg-[#0D121F] border border-slate-800 rounded-xl overflow-hidden flex flex-col" id="camCard31">
+              <div class="bg-[#0A0E18] px-3 py-2 border-b border-slate-800 flex items-center justify-between">
+                <div class="flex items-center gap-2 text-xs font-semibold text-white">
+                  <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                  <span class="font-mono text-sky-400 font-bold">CH 31</span>
+                  <span class="text-slate-300">Reception Lobby</span>
+                </div>
+                <button onclick="focusCamera(31)" class="text-slate-400 hover:text-white text-xs px-2 py-1 rounded bg-slate-800/60">⛶</button>
+              </div>
+              <div class="flex-1 bg-black relative flex items-center justify-center min-h-0">
+                <img src="/video_feed/31" class="w-full h-full object-contain" id="stream31" alt="CH 31">
+                <div class="absolute bottom-2 right-2 bg-slate-900/90 border border-emerald-500/30 px-2 py-0.5 rounded text-[10px] font-bold text-emerald-400 backdrop-blur-sm">
+                  AI Active &bull; &ge;87%
+                </div>
+              </div>
+            </div>
+
+            <!-- Camera 32 -->
+            <div class="cam-card bg-[#0D121F] border border-slate-800 rounded-xl overflow-hidden flex flex-col" id="camCard32">
+              <div class="bg-[#0A0E18] px-3 py-2 border-b border-slate-800 flex items-center justify-between">
+                <div class="flex items-center gap-2 text-xs font-semibold text-white">
+                  <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                  <span class="font-mono text-sky-400 font-bold">CH 32</span>
+                  <span class="text-slate-300">Access Corridor</span>
+                </div>
+                <button onclick="focusCamera(32)" class="text-slate-400 hover:text-white text-xs px-2 py-1 rounded bg-slate-800/60">⛶</button>
+              </div>
+              <div class="flex-1 bg-black relative flex items-center justify-center min-h-0">
+                <img src="/video_feed/32" class="w-full h-full object-contain" id="stream32" alt="CH 32">
+                <div class="absolute bottom-2 right-2 bg-slate-900/90 border border-emerald-500/30 px-2 py-0.5 rounded text-[10px] font-bold text-emerald-400 backdrop-blur-sm">
+                  AI Active &bull; &ge;87%
+                </div>
+              </div>
+            </div>
+
+            <!-- Camera 33 -->
+            <div class="cam-card bg-[#0D121F] border border-slate-800 rounded-xl overflow-hidden flex flex-col" id="camCard33">
+              <div class="bg-[#0A0E18] px-3 py-2 border-b border-slate-800 flex items-center justify-between">
+                <div class="flex items-center gap-2 text-xs font-semibold text-white">
+                  <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                  <span class="font-mono text-sky-400 font-bold">CH 33</span>
+                  <span class="text-slate-300">Gate / Entrance</span>
+                </div>
+                <button onclick="focusCamera(33)" class="text-slate-400 hover:text-white text-xs px-2 py-1 rounded bg-slate-800/60">⛶</button>
+              </div>
+              <div class="flex-1 bg-black relative flex items-center justify-center min-h-0">
+                <img src="/video_feed/33" class="w-full h-full object-contain" id="stream33" alt="CH 33">
+                <div class="absolute bottom-2 right-2 bg-slate-900/90 border border-emerald-500/30 px-2 py-0.5 rounded text-[10px] font-bold text-emerald-400 backdrop-blur-sm">
+                  AI Active &bull; &ge;87%
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Right: Real-Time Verification Sidebar & 5-Min Countdown -->
+        <aside class="w-80 lg:w-96 bg-[#0D121F] border border-slate-800 rounded-xl flex flex-col overflow-hidden shadow-xl">
+          <div class="p-3.5 bg-[#0A0E18] border-b border-slate-800 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              <h3 class="text-xs font-bold uppercase tracking-wider text-white">Live Verification Stream</h3>
+            </div>
+            <span class="px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-xs font-bold border border-emerald-500/20" id="todayCountBadge">0 Verified</span>
+          </div>
+
+          <!-- Active 5-Minute Window Countdown Box -->
+          <div class="p-3 bg-amber-500/10 border-b border-amber-500/30 hidden" id="activeWindowsBox">
+            <div class="flex items-center gap-2 text-xs font-bold text-amber-400 mb-2">
+              <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+              <span>Active 5-Minute Fingerprint Windows</span>
+            </div>
+            <div class="flex flex-col gap-1.5" id="activeWindowsList"></div>
+          </div>
+
+          <!-- Live Event Cards -->
+          <div class="flex-1 p-3 overflow-y-auto space-y-2.5" id="liveEventsContainer">
+            <div class="text-center py-16 text-slate-500" id="emptyStateEvents">
+              <div class="text-3xl mb-2">👥</div>
+              <p class="text-xs font-semibold text-slate-400">Waiting for face detections...</p>
+              <span class="text-[11px] text-slate-500">Walk into camera zone 30, 31, or 32</span>
+            </div>
+          </div>
+        </aside>
+
+      </section>
+
+      <!-- ============================================== -->
+      <!-- TAB 2: DUAL-VERIFICATION MATRIX (FACE + FP) -->
+      <!-- ============================================== -->
+      <section id="tab-verification" class="tab-pane h-full flex flex-col p-6 gap-5 overflow-y-auto hidden">
+        
+        <!-- Summary Metric Cards -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div class="bg-[#0D121F] border border-slate-800 p-4 rounded-xl flex items-center gap-3.5 shadow-lg">
+            <div class="w-12 h-12 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center text-xl font-bold">✓</div>
+            <div>
+              <div class="text-xs text-slate-400 font-medium">Valid Attendance</div>
+              <div class="text-2xl font-extrabold text-emerald-400" id="vMetricValid">0</div>
+            </div>
+          </div>
+
+          <div class="bg-[#0D121F] border border-slate-800 p-4 rounded-xl flex items-center gap-3.5 shadow-lg">
+            <div class="w-12 h-12 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center justify-center text-xl font-bold">⏳</div>
+            <div>
+              <div class="text-xs text-slate-400 font-medium">Waiting Fingerprint (5m Window)</div>
+              <div class="text-2xl font-extrabold text-amber-400" id="vMetricPending">0</div>
+            </div>
+          </div>
+
+          <div class="bg-[#0D121F] border border-slate-800 p-4 rounded-xl flex items-center gap-3.5 shadow-lg">
+            <div class="w-12 h-12 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 flex items-center justify-center text-xl font-bold">⚠️</div>
+            <div>
+              <div class="text-xs text-slate-400 font-medium">Fingerprint Missing (Timeout)</div>
+              <div class="text-2xl font-extrabold text-red-400" id="vMetricMissing">0</div>
+            </div>
+          </div>
+
+          <div class="bg-[#0D121F] border border-slate-800 p-4 rounded-xl flex items-center gap-3.5 shadow-lg">
+            <div class="w-12 h-12 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20 flex items-center justify-center text-xl font-bold">🚪</div>
+            <div>
+              <div class="text-xs text-slate-400 font-medium">Mid-Day Exits Recorded</div>
+              <div class="text-2xl font-extrabold text-purple-400" id="vMetricExits">0</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Action Bar & Search -->
+        <div class="flex flex-wrap items-center justify-between gap-3 bg-[#0D121F] p-3 rounded-xl border border-slate-800">
+          <div class="relative flex-1 min-w-[280px]">
+            <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-500">🔍</span>
+            <input type="text" id="verificationSearch" placeholder="Search by Employee ID, Name, or Status..." class="w-full bg-[#111827] border border-slate-800 rounded-lg pl-9 pr-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500">
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="openSimulatePunchModal()" class="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs transition-all shadow-md shadow-sky-600/20">
+              👆 Test Fingerprint Punch
+            </button>
+            <button onclick="exportVerificationCSV()" class="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs border border-slate-700 transition-all">
+              📥 Export CSV
+            </button>
+            <button onclick="loadVerificationData()" class="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs border border-slate-700 transition-all">
+              🔄 Refresh
+            </button>
+          </div>
+        </div>
+
+        <!-- Dual-Verification Matrix Table -->
+        <div class="bg-[#0D121F] border border-slate-800 rounded-xl overflow-hidden shadow-xl">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-[#0A0E18] text-slate-400 border-b border-slate-800 uppercase font-semibold text-[11px] tracking-wider">
+                <tr>
+                  <th class="p-3.5">Employee</th>
+                  <th class="p-3.5">Morning Face</th>
+                  <th class="p-3.5">Morning Fingerprint</th>
+                  <th class="p-3.5">Morning Status</th>
+                  <th class="p-3.5">Exit / Remarks</th>
+                  <th class="p-3.5">Evening Face</th>
+                  <th class="p-3.5">Evening Fingerprint</th>
+                  <th class="p-3.5">Final Verification</th>
+                  <th class="p-3.5 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="verificationTableBody" class="divide-y divide-slate-800/60 text-slate-300">
+                <!-- Injected via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- ============================================== -->
+      <!-- TAB 3: ATTENDANCE LOG (LEGACY COMPATIBILITY) -->
+      <!-- ============================================== -->
+      <section id="tab-attendance" class="tab-pane h-full flex flex-col p-6 gap-5 overflow-y-auto hidden">
+        
+        <div class="flex flex-wrap items-center justify-between gap-3 bg-[#0D121F] p-3 rounded-xl border border-slate-800">
+          <div class="relative flex-1 min-w-[280px]">
+            <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-500">🔍</span>
+            <input type="text" id="attendanceSearch" placeholder="Search by Employee ID, Name, or Camera..." class="w-full bg-[#111827] border border-slate-800 rounded-lg pl-9 pr-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500">
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="exportAttendanceCSV()" class="px-3.5 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs transition-all">
+              📥 Export CSV
+            </button>
+            <button onclick="loadAttendanceData()" class="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs border border-slate-700 transition-all">
+              🔄 Refresh
+            </button>
+          </div>
+        </div>
+
+        <div class="bg-[#0D121F] border border-slate-800 rounded-xl overflow-hidden shadow-xl">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-[#0A0E18] text-slate-400 border-b border-slate-800 uppercase font-semibold text-[11px] tracking-wider">
+                <tr>
+                  <th class="p-3.5">Face Snapshot</th>
+                  <th class="p-3.5">Employee ID</th>
+                  <th class="p-3.5">Employee Name</th>
+                  <th class="p-3.5">Date</th>
+                  <th class="p-3.5">Check-In Time</th>
+                  <th class="p-3.5">Camera Source</th>
+                  <th class="p-3.5">Confidence</th>
+                  <th class="p-3.5">Status</th>
+                  <th class="p-3.5 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="attendanceTableBody" class="divide-y divide-slate-800/60 text-slate-300">
+                <!-- Injected via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- ============================================== -->
+      <!-- TAB 4: EMPLOYEE ROSTER -->
+      <!-- ============================================== -->
+      <section id="tab-employees" class="tab-pane h-full flex flex-col p-6 gap-5 overflow-y-auto hidden">
+        <div class="flex items-center justify-between bg-[#0D121F] p-4 rounded-xl border border-slate-800">
+          <div>
+            <h2 class="text-base font-bold text-white">Enrolled Employee Profiles</h2>
+            <p class="text-xs text-slate-400">Local facial database synchronized with <code>profiledb/</code></p>
+          </div>
+          <button onclick="openEnrollModal()" class="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs shadow-lg shadow-sky-600/20">
+            ➕ Enroll New Employee
+          </button>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4" id="employeesGrid">
+          <!-- Profiles injected via JS -->
+        </div>
+      </section>
+
+    </main>
+
+    <!-- ============================================== -->
+    <!-- MODALS (PROPERLY HIDDEN WITH Tailwind z-50) -->
+    <!-- ============================================== -->
+
+    <!-- Modal 1: Enroll Employee -->
+    <div id="enrollModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-[#0D121F] border border-slate-700 rounded-2xl w-full max-w-md p-6 shadow-2xl animate-fade-in">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
+          <h3 class="text-sm font-bold text-white flex items-center gap-2">➕ Enroll New Employee</h3>
+          <button onclick="closeEnrollModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
+        </div>
+        <form id="enrollForm" onsubmit="handleEnrollSubmit(event)" class="space-y-4 text-xs">
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">Employee ID (EC Number) *</label>
+            <input type="text" id="enrollEcno" required placeholder="e.g. 10452" class="w-full bg-[#111827] border border-slate-700 rounded-lg p-2.5 text-white focus:outline-none focus:border-sky-500">
+          </div>
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">Full Name *</label>
+            <input type="text" id="enrollName" required placeholder="e.g. John Doe" class="w-full bg-[#111827] border border-slate-700 rounded-lg p-2.5 text-white focus:outline-none focus:border-sky-500">
+          </div>
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">Face Photo (.jpg, .jpeg, .png) *</label>
+            <input type="file" id="enrollPhoto" accept="image/*" required class="w-full bg-[#111827] border border-slate-700 rounded-lg p-2 text-slate-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-sky-600 file:text-white">
+            <p class="text-[11px] text-slate-500 mt-1">Provide a clear front-facing face photo for highest recognition accuracy.</p>
+          </div>
+          <div class="flex justify-end gap-2 pt-3 border-t border-slate-800">
+            <button type="button" onclick="closeEnrollModal()" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold">Cancel</button>
+            <button type="submit" id="enrollSubmitBtn" class="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold shadow-lg">Save & Enroll</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal 2: Verification Settings -->
+    <div id="settingsModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-[#0D121F] border border-slate-700 rounded-2xl w-full max-w-lg p-6 shadow-2xl animate-fade-in">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
+          <h3 class="text-sm font-bold text-white flex items-center gap-2">⚙️ Attendance Verification Settings</h3>
+          <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
+        </div>
+        <form id="settingsForm" onsubmit="handleSettingsSubmit(event)" class="space-y-4 text-xs">
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">Face Recognition Acceptance Threshold (%) *</label>
+            <input type="number" id="settingFaceThresh" min="50" max="100" step="1" required value="80" class="w-full bg-[#111827] border border-slate-700 rounded-lg p-2.5 text-white focus:outline-none focus:border-sky-500">
+            <p class="text-[11px] text-slate-500 mt-1">Acceptance threshold: 80% (High priority matches: &ge;87%).</p>
+          </div>
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">Fingerprint Verification Window (Minutes) *</label>
+            <input type="number" id="settingWindowMins" min="1" max="60" required value="5" class="w-full bg-[#111827] border border-slate-700 rounded-lg p-2.5 text-white focus:outline-none focus:border-sky-500">
+            <p class="text-[11px] text-slate-500 mt-1">Allowed time for employee to place fingerprint after face detection (Default: 5 mins).</p>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-slate-300 font-semibold mb-1">Morning Shift Target</label>
+              <input type="time" id="settingMorningStart" value="09:00" class="w-full bg-[#111827] border border-slate-700 rounded-lg p-2.5 text-white focus:outline-none focus:border-sky-500">
+            </div>
+            <div>
+              <label class="block text-slate-300 font-semibold mb-1">Evening Shift Target</label>
+              <input type="time" id="settingEveningStart" value="19:30" class="w-full bg-[#111827] border border-slate-700 rounded-lg p-2.5 text-white focus:outline-none focus:border-sky-500">
+            </div>
+          </div>
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">Session Cooldown (Seconds)</label>
+            <input type="number" id="settingCooldown" min="10" max="600" value="60" class="w-full bg-[#111827] border border-slate-700 rounded-lg p-2.5 text-white focus:outline-none focus:border-sky-500">
+            <p class="text-[11px] text-slate-500 mt-1">Prevents duplicate check-ins while employee stands in front of camera.</p>
+          </div>
+          <div class="flex justify-end gap-2 pt-3 border-t border-slate-800">
+            <button type="button" onclick="closeSettingsModal()" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold">Cancel</button>
+            <button type="submit" class="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold shadow-lg">Save Settings</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal 3: Simulate Fingerprint Punch -->
+    <div id="punchModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-[#0D121F] border border-slate-700 rounded-2xl w-full max-w-md p-6 shadow-2xl animate-fade-in">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
+          <h3 class="text-sm font-bold text-white flex items-center gap-2">👆 Test Fingerprint Punch</h3>
+          <button onclick="closeSimulatePunchModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
+        </div>
+        <form id="punchForm" onsubmit="handlePunchSubmit(event)" class="space-y-4 text-xs">
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">Select Employee *</label>
+            <select id="punchEcnoSelect" required class="w-full bg-[#111827] border border-slate-700 rounded-lg p-2.5 text-white focus:outline-none focus:border-sky-500"></select>
+            <p class="text-[11px] text-slate-500 mt-1">Simulates employee placing finger on the biometric terminal.</p>
+          </div>
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">Fingerprint Terminal ID</label>
+            <input type="text" id="punchDeviceId" value="FP_TERMINAL_01" class="w-full bg-[#111827] border border-slate-700 rounded-lg p-2.5 text-white focus:outline-none focus:border-sky-500">
+          </div>
+          <div class="flex justify-end gap-2 pt-3 border-t border-slate-800">
+            <button type="button" onclick="closeSimulatePunchModal()" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold">Cancel</button>
+            <button type="submit" class="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold shadow-lg">Simulate Punch</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal 4: Edit Verification Record -->
+    <div id="editRecordModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-[#0D121F] border border-slate-700 rounded-2xl w-full max-w-lg p-6 shadow-2xl animate-fade-in">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
+          <h3 class="text-sm font-bold text-white flex items-center gap-2">✏️ Alter Verification Record</h3>
+          <button onclick="closeEditRecordModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
+        </div>
+        <form id="editRecordForm" onsubmit="handleEditRecordSubmit(event)" class="space-y-3.5 text-xs">
+          <input type="hidden" id="editDate">
+          <input type="hidden" id="editEcno">
+
+          <div class="p-2.5 bg-slate-900/80 rounded-lg border border-slate-800 flex items-center justify-between">
+            <div class="font-bold text-white text-sm" id="editEmpName">--</div>
+            <div class="font-mono text-sky-400 text-xs" id="editEmpId">ID: --</div>
+          </div>
+
+          <div class="grid grid-cols-3 gap-2.5">
+            <div>
+              <label class="block text-slate-300 font-semibold mb-1">Morning Face Time</label>
+              <input type="text" id="editMorningFace" placeholder="HH:MM:SS" class="w-full bg-[#111827] border border-slate-700 rounded-lg p-2 text-white font-mono">
+            </div>
+            <div>
+              <label class="block text-slate-300 font-semibold mb-1">Morning FP Time</label>
+              <input type="text" id="editMorningFp" placeholder="HH:MM:SS" class="w-full bg-[#111827] border border-slate-700 rounded-lg p-2 text-white font-mono">
+            </div>
+            <div>
+              <label class="block text-slate-300 font-semibold mb-1">Morning Status</label>
+              <select id="editMorningStatus" class="w-full bg-[#111827] border border-slate-700 rounded-lg p-2 text-white">
+                <option value="VALID">VALID</option>
+                <option value="PENDING_FINGERPRINT">PENDING_FP</option>
+                <option value="FINGERPRINT_MISSING">FP_MISSING</option>
+                <option value="NOT_CHECKED_IN">NOT_CHECKED_IN</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-slate-300 font-semibold mb-1">Mid-Day Exit Remark</label>
+            <input type="text" id="editExitRemark" placeholder="e.g. Went out at 13:15:00 during working hours" class="w-full bg-[#111827] border border-slate-700 rounded-lg p-2 text-white">
+          </div>
+
+          <div class="grid grid-cols-3 gap-2.5">
+            <div>
+              <label class="block text-slate-300 font-semibold mb-1">Evening Face Time</label>
+              <input type="text" id="editEveningFace" placeholder="HH:MM:SS" class="w-full bg-[#111827] border border-slate-700 rounded-lg p-2 text-white font-mono">
+            </div>
+            <div>
+              <label class="block text-slate-300 font-semibold mb-1">Evening FP Time</label>
+              <input type="text" id="editEveningFp" placeholder="HH:MM:SS" class="w-full bg-[#111827] border border-slate-700 rounded-lg p-2 text-white font-mono">
+            </div>
+            <div>
+              <label class="block text-slate-300 font-semibold mb-1">Evening Status</label>
+              <select id="editEveningStatus" class="w-full bg-[#111827] border border-slate-700 rounded-lg p-2 text-white">
+                <option value="VALID">VALID</option>
+                <option value="PENDING_FINGERPRINT">PENDING_FP</option>
+                <option value="FINGERPRINT_MISSING">FP_MISSING</option>
+                <option value="NOT_CHECKED_IN">NOT_CHECKED_IN</option>
+              </select>
+            </div>
+          </div>
+
+    <!-- Modal 5: High-Clarity Face Snapshot Inspector -->
+    <div id="photoPreviewModal" class="hidden fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4" onclick="if(event.target===this) closePhotoPreviewModal()">
+      <div class="bg-[#0D121F] border border-sky-500/30 rounded-2xl w-full max-w-lg p-6 shadow-2xl shadow-sky-950/50 animate-fade-in relative flex flex-col items-center gap-4">
+        <div class="w-full flex items-center justify-between pb-3 border-b border-slate-800">
+          <div class="flex items-center gap-2.5">
+            <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            <h3 class="text-sm font-bold text-white tracking-wide">Captured Face Verification Snapshot</h3>
+          </div>
+          <button onclick="closePhotoPreviewModal()" class="text-slate-400 hover:text-white text-xl font-bold px-2 py-0.5 rounded-lg hover:bg-slate-800 transition-all">&times;</button>
+        </div>
+
+        <div class="relative group w-full flex justify-center bg-black/60 rounded-xl p-3 border border-slate-800/80">
+          <img id="photoModalImg" src="" alt="Face Snapshot" class="max-h-72 max-w-full rounded-xl object-contain shadow-2xl border-2 border-sky-500/40 transition-all duration-300">
+          <div id="photoModalConfidenceBadge" class="absolute bottom-5 right-5 bg-emerald-500/90 text-white font-bold text-xs px-3 py-1 rounded-full shadow-lg backdrop-blur-sm border border-emerald-300/40">
+            96% Match
+          </div>
+        </div>
+
+        <div class="w-full bg-slate-900/90 rounded-xl p-3.5 border border-slate-800 flex flex-col gap-2">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-base font-bold text-white" id="photoModalName">--</div>
+              <div class="text-xs font-mono text-sky-400 font-semibold" id="photoModalEcno">ID: --</div>
+            </div>
+            <div class="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" id="photoModalStatus">
+              VALID ATTENDANCE
+            </div>
+          </div>
+          <div class="flex items-center justify-between text-[11px] text-slate-400 border-t border-slate-800/80 pt-2">
+            <span id="photoModalTime">⏰ Captured: --</span>
+            <span class="text-slate-500">Dual Verification Mode</span>
+          </div>
+        </div>
+
+        <button onclick="closePhotoPreviewModal()" class="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs border border-slate-700 transition-all">
+          Close Inspector
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="/static/app.js?v=20260923"></script>
+</body>
+</html>
